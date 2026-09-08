@@ -264,3 +264,32 @@ in der Instanz, auf Kosten einer längeren Wartezeit beim Titelwechsel.
 echte Hardware und einen laufenden Supervisor ist nichts davon gelaufen. Die
 wahrscheinlichsten Stolperstellen sind der Profilname in Schritt 1 (je nach
 Interface heißt er anders) und die Kanalreihenfolge in Schritt 2.
+
+## Stolpersteine aus der Praxis (real erlebt)
+
+**Bus-powered Interface an schwachem USB-Port.** Ein bus-versorgtes Interface
+kann am USB genug Strom fuer den Digitalteil bekommen (Enumeration, Power-LED,
+Steuer-Interface, der USB-Stream rastet sogar auf 44100 Hz ein), aber zu wenig
+fuer die analoge Ausgangsstufe. Dann sind die Ausgaenge stumm und die
+Signal-LEDs bleiben aus -- **ohne** dass der Kernel einen Fehler meldet.
+Beobachtet an einer ESI GIGAPORT eX: an einem USB-2-Port tot, an einem
+**USB-3-Port** (mehr Strom) sofort funktionierend. Abhilfe: USB-3-Port oder
+aktiver USB-Hub.
+
+**Geraeteabhaengige Kanalordnung.** Nicht jedes Interface meldet seine acht
+Kanaele in Standard-7.1-Ordnung. Die GIGAPORT eX hat
+`FL FR FC LFE RL RR FLC FRC`, PulseAudio nimmt `FL FR RL RR FC LFE SL SR` an.
+Dadurch landen zwei Zonen auf vertauschten Buchsen (rear-Paar auf 5/6,
+center/lfe-Paar auf 3/4). Nachpruefen: Zone fuer Zone abspielen und sehen/hoeren,
+welcher Ausgang leuchtet; bei Vertauschung die Spalte 4 der betroffenen Zonen in
+der zones.conf tauschen (bzw. im Add-on die output-Werte).
+
+**HAOS als VM mit USB-Passthrough.** USB-Audio ist isochron und empfindlich
+gegen Virtualisierung. Passthrough des ganzen PCI-USB-Controllers ist
+zuverlaessiger als das Durchreichen eines einzelnen USB-Geraets. Der sauberste
+Weg bleibt, den Player auf Bare-Metal zu betreiben (genau wofuer diese
+Compose-Variante da ist) und ihn ueber das Netz an Music Assistant zu haengen.
+
+**Signal-LEDs zuerst.** Die 8 LEDs zeigen anliegendes Audio je Kanal -- auch
+ohne angeschlossene Lautsprecher. Leuchten sie, kommt das Signal an. Erst die
+LEDs pruefen, dann die Kette dahinter.
