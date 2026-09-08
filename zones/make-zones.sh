@@ -2,89 +2,41 @@
 # Erzeugt eine zones.conf: aus einem mehrkanaligen Ausgang werden Stereo-Zonen,
 # eine je Kanalpaar. Fuer jedes Interface, nicht fuer ein bestimmtes.
 #
-# Aufruf:  ./make-zones.sh <kanalzahl> [Name1 Name2 ...] > zones.conf
+# Aufruf:  ./make-zones.sh <kanalzahl|kanalmap> [Name1 Name2 ...] > zones.conf
 #
-#   ./make-zones.sh 8 Wohnzimmer Kueche Bad Buero   -> 4 Stereo-Zonen
-#   ./make-zones.sh 4                               -> 2 Zonen, "Zone 1", "Zone 2"
-#   ./make-zones.sh 6 Wohnzimmer                    -> 3 Zonen, Rest generisch
+#   ./make-zones.sh 8 Wohnzimmer Kueche Bad Buero
+#   ./make-zones.sh front-left,front-right,rear-left,rear-right Wohnzimmer Kueche
 #
-# Die Kanalzahl ist die des Ausgangs, nicht die der Buchsen am Geraet: ein
-# 8-Kanal-Interface, dessen Profil auf Stereo steht, hat hier 2. Wie man beides
-# nachsieht, steht in README.de.md.
+# Das erste Argument ist entweder die Kanalzahl des Ausgangs oder seine
+# tatsaechliche Kanalmap. Die Map ist die bessere Angabe: aus einer Zahl muss
+# geraten werden, welche Kanalpositionen dahinterstehen, und das stimmt nur,
+# solange das Geraet der ALSA-Konvention folgt. `ha audio info` bzw.
+# `pactl list sinks` nennen die echte Map -- wo sie zur Hand ist, gehoert sie
+# hierher.
+#
+# Zonen entstehen nur fuer Paare, die in der Map auch wirklich vorkommen. Ein
+# Ausgang mit sechs Kanaelen ergibt drei Zonen, einer mit acht vier, und einer
+# mit Positionen, die zu keinem bekannten Paar gehoeren, entsprechend weniger.
 set -euo pipefail
 
-if [ "$#" -lt 1 ]; then
-    echo "Aufruf: $0 <kanalzahl> [Zonenname ...]" >&2
-    exit 1
-fi
+# Die vier Paare, aus denen eine Stereo-Zone werden kann. Das ist dieselbe
+# Aufstellung, die der (nie veroeffentlichte) local_audio-Provider von Music
+# Assistant in remap_topology.py fuehrte -- uebernommen, damit die Aufteilung
+# hier dieselbe ist wie die, die dort funktioniert hat.
+readonly PAIRS='front-left:front-right rear-left:rear-right front-center:lfe side-left:side-right'
 
-channels=$1
-shift
+# Ab dieser Breite bekommt der Ausgang zusaetzlich eine Zone ueber alle Kanaele
+# -- die "alle Raeume"-Zone. Ebenfalls von dort uebernommen.
+readonly PASSTHROUGH_MIN_CHANNELS=6
 
-case ${channels} in
-    *[!0-9]* | '')
-        echo "Die Kanalzahl \"${channels}\" ist keine Zahl." >&2
-        exit 1
-        ;;
-esac
+# Der Sink-Name wird aus dem Anzeigenamen abgeleitet. Umlaute werden
+# ausgeschrieben statt entwertet, damit aus Kueche und Kuche nicht derselbe Sink
+# wird; alles weitere ausserhalb [a-z0-9_] faellt weg, weil PulseAudio-Sinknamen
+# ASCII sind und ein Name, den man in eine Modulzeile schreibt, keine
+# Sonderzeichen tragen sollte.
+sink_name() {
+    local label=$1 fallback=$2 sink
 
-# Ungerade Kanalzahlen haben kein letztes Paar, und mehr als acht Kanaele hat
-# keine der Standard-Kanalmaps unten. Beides ist ein Abbruch statt einer
-# zones.conf, die halb stimmt.
-if [ "${channels}" -lt 2 ] || [ "${channels}" -gt 8 ] || [ $((channels % 2)) -ne 0 ]; then
-    echo "Kanalzahl ${channels}: erwartet wird eine gerade Zahl von 2 bis 8." >&2
-    exit 1
-fi
-
-# Die Kanalpositionen, die PulseAudio einem Ausgang dieser Breite gibt, in der
-# Reihenfolge der Buchsen. Das ist die ALSA-Konvention, der die Profile
-# analog-stereo, -surround-40, -surround-51 und -surround-71 folgen.
-case ${channels} in
-    2) positions='front-left front-right' ;;
-    4) positions='front-left front-right rear-left rear-right' ;;
-    6) positions='front-left front-right rear-left rear-right front-center lfe' ;;
-    8) positions='front-left front-right rear-left rear-right front-center lfe side-left side-right' ;;
-esac
-
-read -r -a position <<< "${positions}"
-zone_count=$((channels / 2))
-
-cat <<EOF
-# Zonendefinition, erzeugt von zones/make-zones.sh aus ${channels} Kanaelen.
-#
-# Spalten, durch | getrennt:
-#   1 slug-suffix  Anhaengsel an den Add-on-Slug. [a-z0-9_], kurz halten.
-#   2 Anzeigename  So heisst der Player in Music Assistant und im HA-Seitenmenue.
-#   3 Sink-Name    Name des PulseAudio-Sinks, [a-z0-9_].
-#   4 Kanalpaar    Die zwei Kanaele des Ausgangs, die diese Zone belegt.
-#
-# Die Kanalpositionen in Spalte 4 sind Namen fuer Buchsen, keine Aussage
-# darueber, was daran haengt -- "lfe" auf Ausgang 6 ist ein Etikett, kein
-# Subwoofer. Zeile fuer Zeile gilt: Zone n liegt auf den Ausgaengen 2n-1 und 2n.
-#
-# Zonen dazunehmen oder wegnehmen geht durch Bearbeiten dieser Datei; danach
-# make-custom-pa.sh und make-addons.sh erneut laufen lassen.
-EOF
-
-for ((i = 0; i < zone_count; i++)); do
-    left=${position[$((i * 2))]}
-    right=${position[$((i * 2 + 1))]}
-
-    if [ "$#" -gt 0 ]; then
-        label=$1
-        shift
-    else
-        label="Zone $((i + 1))"
-    fi
-
-    # Der Sink-Name wird aus dem Anzeigenamen abgeleitet, weil zwei Zonen sonst
-    # denselben bekaemen. Umlaute und alles andere ausserhalb [a-z0-9_] fallen
-    # dabei weg -- PulseAudio-Sinknamen sind ASCII, und ein Name, den man in
-    # eine Modulzeile schreibt, sollte keine Sonderzeichen tragen.
-    # Umlaute werden ausgeschrieben statt entwertet, damit aus Kueche und Kuche
-    # nicht derselbe Sink wird; alles weitere ausserhalb [a-z0-9_] faellt weg.
-    # PulseAudio-Sinknamen sind ASCII, und ein Name, den man in eine Modulzeile
-    # schreibt, sollte keine Sonderzeichen tragen.
     sink=$(printf '%s' "${label}" \
         | sed -e 's/Ä/Ae/g' -e 's/Ö/Oe/g' -e 's/Ü/Ue/g' \
               -e 's/ä/ae/g' -e 's/ö/oe/g' -e 's/ü/ue/g' -e 's/ß/ss/g' \
@@ -95,12 +47,132 @@ for ((i = 0; i < zone_count; i++)); do
     # Der Praefix bleibt weg, wo der Name ihn schon traegt: aus "Zone 1" wird
     # zone_1, nicht zone_zone_1.
     case ${sink} in
-        '') sink="zone_$((i + 1))" ;;
+        '') sink="zone_${fallback}" ;;
         zone_*) ;;
         zone*) sink="zone_${sink#zone}" ;;
         *) sink="zone_${sink}" ;;
     esac
-    sink=$(printf '%s' "${sink}" | sed -e 's/__*/_/g' -e 's/_$//')
+    printf '%s\n' "${sink}" | sed -e 's/__*/_/g' -e 's/_$//'
+}
 
-    printf 'z%d|%s|%s|%s,%s\n' "$((i + 1))" "${label}" "${sink}" "${left}" "${right}"
+if [ "$#" -lt 1 ]; then
+    echo "Aufruf: $0 <kanalzahl|kanalmap> [Zonenname ...]" >&2
+    exit 1
+fi
+
+spec=$1
+shift
+
+case ${spec} in
+    *[!0-9]*)
+        # Eine Kanalmap: uebernommen, wie sie ist.
+        channel_map=${spec}
+        ;;
+    '')
+        echo "Erstes Argument fehlt." >&2
+        exit 1
+        ;;
+    *)
+        # Eine Kanalzahl: die Map, die ein Geraet dieser Breite ueblicherweise
+        # hat. ALSA-Konvention, der die Profile analog-stereo, -surround-40,
+        # -surround-51 und -surround-71 folgen.
+        if [ "${spec}" -lt 2 ] || [ "${spec}" -gt 8 ] || [ $((spec % 2)) -ne 0 ]; then
+            echo "Kanalzahl ${spec}: erwartet wird eine gerade Zahl von 2 bis 8, oder eine Kanalmap." >&2
+            exit 1
+        fi
+        case ${spec} in
+            2) channel_map='front-left,front-right' ;;
+            4) channel_map='front-left,front-right,rear-left,rear-right' ;;
+            6) channel_map='front-left,front-right,rear-left,rear-right,front-center,lfe' ;;
+            8) channel_map='front-left,front-right,rear-left,rear-right,front-center,lfe,side-left,side-right' ;;
+        esac
+        ;;
+esac
+
+IFS=',' read -r -a position <<< "${channel_map}"
+channels=${#position[@]}
+
+if [ "${channels}" -lt 2 ]; then
+    echo "Die Kanalmap \"${channel_map}\" hat weniger als zwei Kanaele." >&2
+    exit 1
+fi
+
+# Position -> Index in der Map, damit die Zonen in der Reihenfolge der Buchsen
+# herauskommen und nicht in der, in der die Paare oben notiert sind. Zone 1
+# liegt dann auf dem ersten Kanalpaar des Geraets, Zone 2 auf dem zweiten.
+index_of() {
+    local target=$1 i
+    for i in "${!position[@]}"; do
+        if [ "${position[${i}]}" = "${target}" ]; then
+            printf '%s\n' "${i}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Erst sammeln, dann nach Index sortiert ausgeben.
+found=''
+for pair in ${PAIRS}; do
+    left=${pair%%:*}
+    right=${pair##*:}
+    at=$(index_of "${left}") || continue
+    index_of "${right}" > /dev/null || continue
+    found="${found}${at} ${left} ${right}"$'\n'
 done
+found=$(printf '%s' "${found}" | sort -n)
+
+if [ -z "${found}" ]; then
+    echo "In \"${channel_map}\" steckt kein bekanntes Kanalpaar." >&2
+    echo "Bekannt sind: ${PAIRS}" >&2
+    exit 1
+fi
+
+cat <<EOF
+# Zonendefinition, erzeugt von zones/make-zones.sh.
+# Ausgang: ${channels} Kanaele -- ${channel_map}
+#
+# Spalten, durch | getrennt:
+#   1 slug-suffix  Anhaengsel an den Add-on-Slug. [a-z0-9_], kurz halten.
+#   2 Anzeigename  So heisst der Player in Music Assistant und im HA-Seitenmenue.
+#   3 Sink-Name    Name des PulseAudio-Sinks, [a-z0-9_].
+#   4 Kanaele      Die Kanaele des Ausgangs, die diese Zone belegt.
+#
+# Die Kanalpositionen in Spalte 4 sind Namen fuer Buchsen, keine Aussage
+# darueber, was daran haengt -- "lfe" auf Ausgang 6 ist ein Etikett, kein
+# Subwoofer. Zwei Positionen ergeben eine Stereo-Zone; mehr als zwei eine Zone,
+# die auf alle genannten Kanaele zugleich spielt.
+#
+# Zonen dazunehmen oder wegnehmen geht durch Bearbeiten dieser Datei; danach
+# make-custom-pa.sh und make-addons.sh erneut laufen lassen.
+EOF
+
+n=0
+while read -r _ left right; do
+    [ -n "${left}" ] || continue
+    n=$((n + 1))
+
+    if [ "$#" -gt 0 ]; then
+        label=$1
+        shift
+    else
+        label="Zone ${n}"
+    fi
+
+    printf 'z%d|%s|%s|%s,%s\n' "${n}" "${label}" "$(sink_name "${label}" "${n}")" "${left}" "${right}"
+done <<< "${found}"
+
+# Die Zone ueber alle Kanaele zugleich -- was ein AV-Receiver "Multi Channel
+# Stereo" nennt. Sie belegt dieselben Buchsen wie die Zonen darueber, was kein
+# Konflikt ist: PulseAudio mischt, was gleichzeitig auf denselben Master geht.
+# Wer sie nicht will, loescht die Zeile.
+if [ "${channels}" -ge "${PASSTHROUGH_MIN_CHANNELS}" ]; then
+    n=$((n + 1))
+    if [ "$#" -gt 0 ]; then
+        label=$1
+        shift
+    else
+        label='Alle Zonen'
+    fi
+    printf 'z%d|%s|%s|%s\n' "${n}" "${label}" "$(sink_name "${label}" "${n}")" "${channel_map}"
+fi

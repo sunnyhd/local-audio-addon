@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Erzeugt die custom.pa, die aus dem 8-Kanal-Sink der Karte vier Stereo-Sinks
-# macht -- einen je Zone aus zones.conf.
+# Erzeugt die custom.pa, die den mehrkanaligen Ausgang in die Zonen aus
+# zones.conf schneidet.
 #
 # Aufruf:  ./make-custom-pa.sh <master-sink-name> [zones.conf] > custom.pa
 #
@@ -35,7 +35,7 @@ cat <<EOF
 # Lauf verloren, also zones.conf pflegen und neu erzeugen.
 #
 # Diese Datei gehoert auf der HA-Maschine nach /mnt/data/supervisor/audio/custom.pa.
-# HAs PulseAudio zieht sie am Ende seiner system.pa mit
+# HAs PulseAudio zieht sie am Ende ihrer system.pa mit
 #   .nofail
 #   .include /data/custom.pa
 # ein -- ein offizieller Erweiterungspunkt, und /data ueberlebt Updates des
@@ -89,22 +89,75 @@ while IFS='|' read -r suffix label sink chanmap || [ -n "${suffix}" ]; do
     esac
     seen="${seen} ${sink}"
 
+    case ${chanmap} in
+        *[!a-z0-9,-]*)
+            echo "zones.conf Zeile ${lineno}: Kanalliste \"${chanmap}\" -- erlaubt sind a-z, 0-9, - und Komma." >&2
+            exit 1
+            ;;
+    esac
+
+    # Wie viele Kanaele die Zone belegt, steht in Spalte 4 und wird nicht
+    # geraten. Zwei Positionen sind eine Stereo-Zone; mehr als zwei eine Zone
+    # ueber alle genannten Kanaele.
+    count=$(printf '%s' "${chanmap}" | tr ',' '\n' | grep -c .)
+
+    if [ "${count}" -lt 2 ]; then
+        echo "zones.conf Zeile ${lineno}: \"${chanmap}\" nennt weniger als zwei Kanaele." >&2
+        exit 1
+    fi
+
+    if [ "${count}" -eq 2 ]; then
+        # Nach aussen ist jede Stereo-Zone gewoehnliches front-left,front-right,
+        # ganz gleich, auf welchen Buchsen sie physisch liegt -- ein Player
+        # schickt Stereo und muss nichts von rear-left wissen.
+        target_map='front-left,front-right'
+        note="${chanmap} des Master-Sinks, also ein Ausgangspaar der Karte"
+    else
+        # Die Zone ueber alle Kanaele: Ein- und Ausgangsmap sind dieselbe.
+        target_map=${chanmap}
+        note="alle ${count} Kanaele zugleich"
+    fi
+
     cat <<EOF
-# ${label} -- ${chanmap} des Master-Sinks, also ein Ausgangspaar der Karte.
-# remix=no, damit ein Stereo-Stream genau auf diese zwei Buchsen geht und
-# PulseAudio ihn nicht auf die Kanalpositionen der Zielmap hochrechnet.
-load-module module-remap-sink sink_name=${sink} sink_properties=device.description="${label}" master=${master} master_channel_map=${chanmap} channels=2 channel_map=front-left,front-right remix=no
+# ${label} -- ${note}.
+# remix=no betrifft die Abbildung zwischen dieser Zone und dem Master: was hier
+# hineingeht, geht genau auf die genannten Buchsen und wird nicht auf die
+# uebrigen Kanalpositionen hochgerechnet.
+load-module module-remap-sink sink_name=${sink} sink_properties=device.description="${label}" master=${master} master_channel_map=${chanmap} channels=${count} channel_map=${target_map} remix=no
 
 EOF
 done < "${conf}"
 
 cat <<'EOF'
-# module-switch-on-connect ist in HAs system.pa geladen: es macht jeden neu
-# auftauchenden Sink zum Default. Die vier oben tauchen bei jedem Start auf, und
-# der letzte von ihnen wuerde damit zum Default-Sink der ganzen Maschine -- also
+# ------------------------------------------------------------------------------
+# Aufraeumen hinter den Modulen oben. Die drei folgenden Zeilen stammen aus dem
+# Music-Assistant-PR, der dieselbe Topologie im Server bauen sollte (#5132,
+# geschlossen ohne Merge) -- dort standen sie als das, was sich im Betrieb als
+# noetig herausgestellt hatte.
+# ------------------------------------------------------------------------------
+
+# module-device-restore ist in HAs system.pa geladen und stellt die zuletzt
+# gesetzte Lautstaerke des Master-Sinks wieder her. Die liegt aber *unter* jeder
+# Zone: ein Master auf 40% daempft alle Zonen um 40%, und zwar unsichtbar --
+# die Zonenregler stehen weiter auf 100, Music Assistant zeigt volle Lautstaerke,
+# und es ist trotzdem leise. Der Master gehoert deshalb auf Anschlag; geregelt
+# wird in den Zonen. 65536 ist PulseAudios 100%.
+EOF
+printf 'set-sink-volume %s 65536\n\n' "${master}"
+
+cat <<'EOF'
+# Einmal aus- und wieder einschalten, nachdem die Zonen angelegt sind. Das setzt
+# den Zustand des ALSA-Treibers zurueck, der die Kanaele jetzt anders zugeteilt
+# bekommt als beim Start des Geraets.
+EOF
+printf 'suspend-sink %s 1\nsuspend-sink %s 0\n\n' "${master}" "${master}"
+
+cat <<'EOF'
+# module-switch-on-connect ist ebenfalls geladen: es macht jeden neu
+# auftauchenden Sink zum Default. Die Zonen oben tauchen bei jedem Start auf, und
+# die letzte von ihnen wuerde damit zum Default-Sink der ganzen Maschine -- also
 # dorthin, wo HAs eigene Ansagen und jedes Add-on ohne eigene Auswahl landen.
-# Die Zeile setzt den Default zurueck auf die Karte als Ganzes, nachdem die
-# Zonen da sind. Wer stattdessen einen bestimmten Sink als Default will, traegt
-# ihn hier ein.
+# Die Zeile setzt den Default zurueck auf die Karte als Ganzes. Wer stattdessen
+# eine bestimmte Zone als Default will, traegt sie hier ein.
 EOF
 printf 'set-default-sink %s\n' "${master}"

@@ -6,9 +6,19 @@ Zone ein eigener Player mit eigener Lautstärke, eigener Warteschlange und
 eigener Gruppenzugehörigkeit. Bei acht Ausgängen sind das vier Zonen.
 
 Das ist nicht an ein bestimmtes Gerät gebunden. Die Skripte nehmen den Namen
-des Ausgangs und seine Kanalzahl als Argumente; getestet wurde die Aufteilung
+des Ausgangs und seine Kanäle als Argumente; entwickelt wurde die Aufteilung
 gegen eine ESI GIGAPort eX (8 analoge Ausgänge), aber jedes Interface, das
 PulseAudio mit einem Mehrkanal-Profil erkennt, geht denselben Weg.
+
+Die Aufteilung selbst ist nicht neu erfunden. Music Assistant hatte sie im
+Provider `local_audio` bereits gebaut — dieselben vier Kanalpaare, dasselbe
+`module-remap-sink`, dasselbe `remix=no`. Der Provider wurde am 26.08.2026
+zugunsten des Sendspin-Add-ons stillgelegt (ab Serverversion 2.10.0 nur noch ein
+Grabstein), und der PR, der die Zonen-Topologie dort fertiggestellt hätte, wurde
+am 08.09.2026 ohne Merge geschlossen — mit der Begründung, das sei „outside
+Music Assistant Core" zu lösen. Was hier steht, ist dieses „outside": die
+Kanalpaare, die Namenskonvention und die beiden Korrekturen unten stammen aus
+`remap_topology.py` und aus jenem PR.
 
 ## Warum es diesen Umweg braucht
 
@@ -85,18 +95,40 @@ sieht ungefähr so aus:
 alsa_output.usb-<Hersteller>_<Modell>-00.analog-surround-71
 ```
 
+Wenn die Ausgabe außerdem die **Kanalmap** des Sinks nennt — eine Liste wie
+`front-left,front-right,rear-left,rear-right,…` — dann diese mitschreiben. Sie
+ist in Schritt 2 die bessere Angabe als eine bloße Kanalzahl, weil aus einer Zahl
+geraten werden muss, welche Positionen dahinterstehen.
+
 ## Schritt 2 — Zonen festlegen
 
 ```sh
 ./make-zones.sh 8 Wohnzimmer Küche Bad Büro > zones.conf
 ```
 
-Die Zahl ist die Kanalzahl des Ausgangs, die Namen sind frei. Weniger Namen als
-Zonen ist in Ordnung, der Rest heißt dann "Zone 3", "Zone 4". Die erzeugte
-Datei ordnet Zone *n* den Ausgängen *2n-1* und *2n* zu — Zone 1 also den
-Buchsen 1 und 2. Wer eine andere Zuordnung will, bearbeitet die Datei; sie ist
-absichtlich vier Spalten Text und kein generiertes Artefakt, das man nicht
+Das erste Argument ist die Kanalzahl des Ausgangs — oder, besser, seine echte
+Kanalmap aus Schritt 1:
+
+```sh
+./make-zones.sh front-left,front-right,rear-left,rear-right Wohnzimmer Küche > zones.conf
+```
+
+Der Unterschied zählt bei Geräten, die von der ALSA-Konvention abweichen: aus
+einer Zahl wird die übliche Belegung *angenommen*, aus einer Map wird sie
+*gelesen*. Zonen entstehen nur für Kanalpaare, die in der Map wirklich
+vorkommen — front, rear, side und center+sub.
+
+Die Namen sind frei. Weniger Namen als Zonen ist in Ordnung, der Rest heißt dann
+"Zone 3", "Zone 4". Zone *n* liegt auf den Ausgängen *2n-1* und *2n* — Zone 1
+also auf den Buchsen 1 und 2. Wer eine andere Zuordnung will, bearbeitet die
+Datei; sie ist absichtlich vier Spalten Text und kein Artefakt, das man nicht
 anfassen darf.
+
+**Ab sechs Kanälen kommt eine Zone dazu, die auf alle Ausgänge zugleich
+spielt** — was ein AV-Receiver „Multi Channel Stereo" nennt, hier per Vorgabe
+„Alle Zonen". Sie belegt dieselben Buchsen wie die anderen, was kein Konflikt
+ist: PulseAudio mischt, was gleichzeitig auf denselben Master geht. Wer sie
+nicht braucht, löscht die Zeile.
 
 ## Schritt 3 — PulseAudio aufteilen
 
@@ -198,6 +230,16 @@ zuletzt geladene Zone zum Standardausgang der ganzen Maschine — dorthin gehen
 dann HAs eigene Ansagen und jedes Add-on ohne eigene Auswahl. Die erzeugte
 `custom.pa` setzt den Default am Ende zurück auf den Master. Wer das lieber
 außerhalb regelt, streicht die Zeile und nimmt `ha audio default output --name <sink>`.
+
+**Die Lautstärke des Masters.** `module-device-restore` stellt die zuletzt
+gesetzte Lautstärke des Master-Sinks wieder her, und die liegt *unter* jeder
+Zone: ein Master auf 40 % dämpft alle Zonen um 40 % — unsichtbar, denn die
+Zonenregler stehen weiter auf 100 und Music Assistant zeigt volle Lautstärke.
+Die erzeugte `custom.pa` setzt den Master deshalb bei jedem Start auf Anschlag;
+geregelt wird in den Zonen. Direkt danach wird der Master einmal aus- und
+wieder eingeschaltet (`suspend-sink`), was den Zustand des ALSA-Treibers
+zurücksetzt, der die Kanäle jetzt anders zugeteilt bekommt als beim Start des
+Geräts. Beides stammt aus dem Music-Assistant-PR #5132.
 
 **Die Identität.** Jede Kopie bekommt eine eigene `SENDSPIN_ID` mitgegeben. Ohne
 sie leiten alle Instanzen dieselbe aus der MAC der Netzwerkkarte ab, und ein
