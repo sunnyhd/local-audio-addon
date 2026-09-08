@@ -16,34 +16,59 @@
 # ==============================================================================
 
 # Wohnzimmer -- front-left,front-right des Master-Sinks, also ein Ausgangspaar der Karte.
+# Der Wert von sink_properties steht in doppelten *und* einfachen Anfuehrungs-
+# zeichen. Ohne die inneren zerlegt PulseAudio einen Namen mit Leerzeichen in
+# zwei Argumente und lehnt die ganze Zeile mit "Failed to parse module
+# arguments" ab -- beobachtet an einer Zone namens "Alle Zonen", waehrend die
+# vier einwortigen daneben luden.
 # remix=no betrifft die Abbildung zwischen dieser Zone und dem Master: was hier
 # hineingeht, geht genau auf die genannten Buchsen und wird nicht auf die
 # uebrigen Kanalpositionen hochgerechnet.
-load-module module-remap-sink sink_name=zone_wohnzimmer sink_properties=device.description="Wohnzimmer" master=alsa_output.usb-ESI_Audiotechnik_GmbH_GIGAPORT_eX_GIGAeX-5610-A287-330112025-4648-01.analog-surround-71 master_channel_map=front-left,front-right channels=2 channel_map=front-left,front-right remix=no
+load-module module-remap-sink sink_name=out_1_2_front sink_properties="device.description='Wohnzimmer'" master=alsa_output.usb-ESI_Audiotechnik_GmbH_GIGAPORT_eX_GIGAeX-5610-A287-330112025-4648-01.analog-surround-71 master_channel_map=front-left,front-right channels=2 channel_map=front-left,front-right remix=no
 
 # Küche -- rear-left,rear-right des Master-Sinks, also ein Ausgangspaar der Karte.
+# Der Wert von sink_properties steht in doppelten *und* einfachen Anfuehrungs-
+# zeichen. Ohne die inneren zerlegt PulseAudio einen Namen mit Leerzeichen in
+# zwei Argumente und lehnt die ganze Zeile mit "Failed to parse module
+# arguments" ab -- beobachtet an einer Zone namens "Alle Zonen", waehrend die
+# vier einwortigen daneben luden.
 # remix=no betrifft die Abbildung zwischen dieser Zone und dem Master: was hier
 # hineingeht, geht genau auf die genannten Buchsen und wird nicht auf die
 # uebrigen Kanalpositionen hochgerechnet.
-load-module module-remap-sink sink_name=zone_kueche sink_properties=device.description="Küche" master=alsa_output.usb-ESI_Audiotechnik_GmbH_GIGAPORT_eX_GIGAeX-5610-A287-330112025-4648-01.analog-surround-71 master_channel_map=rear-left,rear-right channels=2 channel_map=front-left,front-right remix=no
+load-module module-remap-sink sink_name=out_3_4_rear sink_properties="device.description='Küche'" master=alsa_output.usb-ESI_Audiotechnik_GmbH_GIGAPORT_eX_GIGAeX-5610-A287-330112025-4648-01.analog-surround-71 master_channel_map=rear-left,rear-right channels=2 channel_map=front-left,front-right remix=no
 
 # Bad -- front-center,lfe des Master-Sinks, also ein Ausgangspaar der Karte.
+# Der Wert von sink_properties steht in doppelten *und* einfachen Anfuehrungs-
+# zeichen. Ohne die inneren zerlegt PulseAudio einen Namen mit Leerzeichen in
+# zwei Argumente und lehnt die ganze Zeile mit "Failed to parse module
+# arguments" ab -- beobachtet an einer Zone namens "Alle Zonen", waehrend die
+# vier einwortigen daneben luden.
 # remix=no betrifft die Abbildung zwischen dieser Zone und dem Master: was hier
 # hineingeht, geht genau auf die genannten Buchsen und wird nicht auf die
 # uebrigen Kanalpositionen hochgerechnet.
-load-module module-remap-sink sink_name=zone_bad sink_properties=device.description="Bad" master=alsa_output.usb-ESI_Audiotechnik_GmbH_GIGAPORT_eX_GIGAeX-5610-A287-330112025-4648-01.analog-surround-71 master_channel_map=front-center,lfe channels=2 channel_map=front-left,front-right remix=no
+load-module module-remap-sink sink_name=out_5_6_center_sub sink_properties="device.description='Bad'" master=alsa_output.usb-ESI_Audiotechnik_GmbH_GIGAPORT_eX_GIGAeX-5610-A287-330112025-4648-01.analog-surround-71 master_channel_map=front-center,lfe channels=2 channel_map=front-left,front-right remix=no
 
 # Büro -- side-left,side-right des Master-Sinks, also ein Ausgangspaar der Karte.
+# Der Wert von sink_properties steht in doppelten *und* einfachen Anfuehrungs-
+# zeichen. Ohne die inneren zerlegt PulseAudio einen Namen mit Leerzeichen in
+# zwei Argumente und lehnt die ganze Zeile mit "Failed to parse module
+# arguments" ab -- beobachtet an einer Zone namens "Alle Zonen", waehrend die
+# vier einwortigen daneben luden.
 # remix=no betrifft die Abbildung zwischen dieser Zone und dem Master: was hier
 # hineingeht, geht genau auf die genannten Buchsen und wird nicht auf die
 # uebrigen Kanalpositionen hochgerechnet.
-load-module module-remap-sink sink_name=zone_buero sink_properties=device.description="Büro" master=alsa_output.usb-ESI_Audiotechnik_GmbH_GIGAPORT_eX_GIGAeX-5610-A287-330112025-4648-01.analog-surround-71 master_channel_map=side-left,side-right channels=2 channel_map=front-left,front-right remix=no
+load-module module-remap-sink sink_name=out_7_8_side sink_properties="device.description='Büro'" master=alsa_output.usb-ESI_Audiotechnik_GmbH_GIGAPORT_eX_GIGAeX-5610-A287-330112025-4648-01.analog-surround-71 master_channel_map=side-left,side-right channels=2 channel_map=front-left,front-right remix=no
 
 # Alle Zonen -- alle 8 Kanaele zugleich.
+# Der Wert von sink_properties steht in doppelten *und* einfachen Anfuehrungs-
+# zeichen. Ohne die inneren zerlegt PulseAudio einen Namen mit Leerzeichen in
+# zwei Argumente und lehnt die ganze Zeile mit "Failed to parse module
+# arguments" ab -- beobachtet an einer Zone namens "Alle Zonen", waehrend die
+# vier einwortigen daneben luden.
 # remix=no betrifft die Abbildung zwischen dieser Zone und dem Master: was hier
 # hineingeht, geht genau auf die genannten Buchsen und wird nicht auf die
 # uebrigen Kanalpositionen hochgerechnet.
-load-module module-remap-sink sink_name=zone_alle_zonen sink_properties=device.description="Alle Zonen" master=alsa_output.usb-ESI_Audiotechnik_GmbH_GIGAPORT_eX_GIGAeX-5610-A287-330112025-4648-01.analog-surround-71 master_channel_map=front-left,front-right,rear-left,rear-right,front-center,lfe,side-left,side-right channels=8 channel_map=front-left,front-right,rear-left,rear-right,front-center,lfe,side-left,side-right remix=no
+load-module module-remap-sink sink_name=out_all sink_properties="device.description='Alle Zonen'" master=alsa_output.usb-ESI_Audiotechnik_GmbH_GIGAPORT_eX_GIGAeX-5610-A287-330112025-4648-01.analog-surround-71 master_channel_map=front-left,front-right,rear-left,rear-right,front-center,lfe,side-left,side-right channels=8 channel_map=front-left,front-right,rear-left,rear-right,front-center,lfe,side-left,side-right remix=no
 
 # ------------------------------------------------------------------------------
 # Aufraeumen hinter den Modulen oben. Die drei folgenden Zeilen stammen aus dem

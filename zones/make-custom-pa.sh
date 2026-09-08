@@ -120,10 +120,15 @@ while IFS='|' read -r suffix label sink chanmap || [ -n "${suffix}" ]; do
 
     cat <<EOF
 # ${label} -- ${note}.
+# Der Wert von sink_properties steht in doppelten *und* einfachen Anfuehrungs-
+# zeichen. Ohne die inneren zerlegt PulseAudio einen Namen mit Leerzeichen in
+# zwei Argumente und lehnt die ganze Zeile mit "Failed to parse module
+# arguments" ab -- beobachtet an einer Zone namens "Alle Zonen", waehrend die
+# vier einwortigen daneben luden.
 # remix=no betrifft die Abbildung zwischen dieser Zone und dem Master: was hier
 # hineingeht, geht genau auf die genannten Buchsen und wird nicht auf die
 # uebrigen Kanalpositionen hochgerechnet.
-load-module module-remap-sink sink_name=${sink} sink_properties=device.description="${label}" master=${master} master_channel_map=${chanmap} channels=${count} channel_map=${target_map} remix=no
+load-module module-remap-sink sink_name=${sink} sink_properties="device.description='${label}'" master=${master} master_channel_map=${chanmap} channels=${count} channel_map=${target_map} remix=no
 
 EOF
 done < "${conf}"

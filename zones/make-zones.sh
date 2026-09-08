@@ -29,30 +29,27 @@ readonly PAIRS='front-left:front-right rear-left:rear-right front-center:lfe sid
 # -- die "alle Raeume"-Zone. Ebenfalls von dort uebernommen.
 readonly PASSTHROUGH_MIN_CHANNELS=6
 
-# Der Sink-Name wird aus dem Anzeigenamen abgeleitet. Umlaute werden
-# ausgeschrieben statt entwertet, damit aus Kueche und Kuche nicht derselbe Sink
-# wird; alles weitere ausserhalb [a-z0-9_] faellt weg, weil PulseAudio-Sinknamen
-# ASCII sind und ein Name, den man in eine Modulzeile schreibt, keine
-# Sonderzeichen tragen sollte.
-sink_name() {
-    local label=$1 fallback=$2 sink
+# Der Sink-Name benennt die Buchsen, nicht den Raum: out_3_4_rear sagt, wo das
+# Kabel steckt, waehrend "Kueche" sagt, wer zuhoert. Das ist die Trennung, die
+# zaehlt -- ein umbenannter Raum laesst die custom.pa unberuehrt, und im
+# Auswahlfeld des Add-ons steht etwas, das man ohne Zettel wiedererkennt.
+#
+# Die Namensteile kommen aus der Kanalmap des Ausgangs, also von PulseAudio. Ein
+# USB-Interface meldet in aller Regel keine eigenen Buchsennamen: die ESI
+# GIGAPort eX etwa fuehrt fuer alle acht Ausgaenge zusammen genau einen Port,
+# "Analog Output". Was es an Namen gibt, sind die Kanalpositionen.
+sink_for_pair() {
+    local left=$1 right=$2 first=$3 second=$4 kind
 
-    sink=$(printf '%s' "${label}" \
-        | sed -e 's/Ä/Ae/g' -e 's/Ö/Oe/g' -e 's/Ü/Ue/g' \
-              -e 's/ä/ae/g' -e 's/ö/oe/g' -e 's/ü/ue/g' -e 's/ß/ss/g' \
-        | tr 'A-Z' 'a-z' \
-        | tr -c 'a-z0-9' '_' \
-        | sed -e 's/__*/_/g' -e 's/^_//' -e 's/_$//')
-
-    # Der Praefix bleibt weg, wo der Name ihn schon traegt: aus "Zone 1" wird
-    # zone_1, nicht zone_zone_1.
-    case ${sink} in
-        '') sink="zone_${fallback}" ;;
-        zone_*) ;;
-        zone*) sink="zone_${sink#zone}" ;;
-        *) sink="zone_${sink}" ;;
+    case "${left},${right}" in
+        front-left,front-right)  kind=front ;;
+        rear-left,rear-right)    kind=rear ;;
+        front-center,lfe)        kind=center_sub ;;
+        side-left,side-right)    kind=side ;;
+        *)                       kind=$(printf '%s' "${left}" | tr -c 'a-z0-9' '_' | sed 's/_*$//') ;;
     esac
-    printf '%s\n' "${sink}" | sed -e 's/__*/_/g' -e 's/_$//'
+
+    printf 'out_%d_%d_%s\n' "${first}" "${second}" "${kind}"
 }
 
 if [ "$#" -lt 1 ]; then
@@ -159,7 +156,9 @@ while read -r _ left right; do
         label="Zone ${n}"
     fi
 
-    printf 'z%d|%s|%s|%s,%s\n' "${n}" "${label}" "$(sink_name "${label}" "${n}")" "${left}" "${right}"
+    printf 'z%d|%s|%s|%s,%s\n' "${n}" "${label}" \
+        "$(sink_for_pair "${left}" "${right}" "$((n * 2 - 1))" "$((n * 2))")" \
+        "${left}" "${right}"
 done <<< "${found}"
 
 # Die Zone ueber alle Kanaele zugleich -- was ein AV-Receiver "Multi Channel
@@ -174,5 +173,5 @@ if [ "${channels}" -ge "${PASSTHROUGH_MIN_CHANNELS}" ]; then
     else
         label='Alle Zonen'
     fi
-    printf 'z%d|%s|%s|%s\n' "${n}" "${label}" "$(sink_name "${label}" "${n}")" "${channel_map}"
+    printf 'z%d|%s|out_all|%s\n' "${n}" "${label}" "${channel_map}"
 fi

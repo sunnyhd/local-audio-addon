@@ -1,9 +1,17 @@
 #!/usr/bin/env bash
 # Erzeugt ein Home-Assistant-Add-on-Repository mit N Zonen-Instanzen.
 #
-# Aufruf:  ./make-repo.sh <zielverzeichnis> [anzahl] [repo-url]
+# Aufruf:  ./make-repo.sh <zielverzeichnis> [anzahl|zones.conf] [repo-url]
 #
 #   ./make-repo.sh ~/dev/ha-addons 4 https://github.com/sunnyhd/ha-addons
+#   ./make-repo.sh ~/dev/ha-addons zones.conf https://github.com/sunnyhd/ha-addons
+#
+# Mit einer zones.conf statt einer Zahl entstehen genau so viele Instanzen, wie
+# die Datei Zonen kennt, und das Feld "Audio output" wird zur Auswahlliste aus
+# ihren Sinks statt zu einem Textfeld -- man klickt das Ausgangspaar an, statt
+# `pulse:zone_kueche` fehlerfrei abtippen zu muessen. Die Liste ist damit an
+# dieselbe Datei gebunden wie die custom.pa, also koennen die beiden Seiten
+# nicht auseinanderlaufen.
 #
 # Der Unterschied zu make-addons.sh: dort werden Zonen fest ins Manifest
 # geschrieben, weil die Kopien fuer genau eine Maschine erzeugt werden. Hier
@@ -32,8 +40,29 @@ repo_url=${3:-}
 
 [ -d "${source_addon}" ] || { echo "Kein local_audio/ neben zones/ gefunden." >&2; exit 1; }
 
+# Zweites Argument: eine Zahl, oder eine zones.conf, aus der Zahl und Auswahl-
+# liste kommen.
+outputs=''
+labels=''
+if [ -f "${count}" ]; then
+    conf=${count}
+    count=0
+    while IFS='|' read -r suffix label sink chanmap || [ -n "${suffix}" ]; do
+        case ${suffix} in '' | '#'*) continue ;; esac
+        [ -n "${sink}" ] || continue
+        count=$((count + 1))
+        outputs="${outputs}|pulse:${sink}"
+        labels="${labels}${labels:+, }${label}"
+    done < "${conf}"
+    if [ "${count}" -eq 0 ]; then
+        echo "In ${conf} steht keine Zone." >&2
+        exit 1
+    fi
+    echo "Aus ${conf}: ${count} Zonen (${labels})" >&2
+fi
+
 case ${count} in
-    *[!0-9]* | '') echo "Anzahl \"${count}\" ist keine Zahl." >&2; exit 1 ;;
+    *[!0-9]* | '') echo "Anzahl \"${count}\" ist weder eine Zahl noch eine lesbare zones.conf." >&2; exit 1 ;;
 esac
 if [ "${count}" -lt 1 ] || [ "${count}" -gt 16 ]; then
     echo "Anzahl ${count}: erwartet wird 1 bis 16." >&2
@@ -66,6 +95,17 @@ for ((i = 1; i <= count; i++)); do
     slug="local_audio_zone${number}"
     dir="${target}/${slug}"
 
+    # Mit einer zones.conf traegt Instanz n den Namen und den Sink der n-ten
+    # Zone schon ab Werk. Ohne sie bleiben beide leer und werden in der
+    # Oberflaeche gesetzt.
+    zone_label=''
+    zone_sink=''
+    if [ -n "${conf:-}" ]; then
+        line=$(grep -vE '^[[:space:]]*(#|$)' "${conf}" | sed -n "${number}p")
+        zone_label=$(printf '%s' "${line}" | cut -d'|' -f2)
+        zone_sink=$(printf '%s' "${line}" | cut -d'|' -f3)
+    fi
+
     mkdir -p "${dir}"
     cp "${source_addon}/apparmor.txt" "${dir}/"
     cp -R "${source_addon}/translations" "${dir}/"
@@ -77,14 +117,18 @@ for ((i = 1; i <= count; i++)); do
     grep -q "^profile ${slug} " "${dir}/apparmor.txt" \
         || { echo "AppArmor-Profil in ${slug} nicht umbenannt." >&2; exit 1; }
 
-    python3 - "${source_addon}/config.yaml" "${dir}/config.yaml" "${slug}" "${number}" <<'PY'
+    python3 - "${source_addon}/config.yaml" "${dir}/config.yaml" "${slug}" "${number}" \
+        "${outputs}" "${zone_label}" "${zone_sink}" <<'PY'
 import re
 import sys
 
-source, dest, slug, number = sys.argv[1:5]
+source, dest, slug, number, outputs, zone_label, zone_sink = sys.argv[1:8]
 text = open(source, encoding='utf-8').read()
 
-text = re.sub(r'^name: .*$', f'name: Local Audio Zone {number}', text, count=1, flags=re.M)
+title = f'Local Audio Zone {number}'
+if zone_label:
+    title = f'Local Audio – {zone_label}'
+text = re.sub(r'^name: .*$', f'name: {title}', text, count=1, flags=re.M)
 text = re.sub(r'^slug: .*$', f'slug: {slug}', text, count=1, flags=re.M)
 text = re.sub(r'^description: >-\n(?:  .*\n)+',
               'description: >-\n'
@@ -104,9 +148,48 @@ text = re.sub(r'^description: >-\n(?:  .*\n)+',
 # Maschine, auf der sie laeuft. Leer faellt der Player auf `default` zurueck und
 # spielt ueber das Audio-Panel -- ein brauchbarer Anfangszustand, der beim ersten
 # Start hoerbar macht, dass die Instanz laeuft.
-text = re.sub(r'^  log_level: info$', '  output: ""\n  log_level: info',
+default_output = f'pulse:{zone_sink}' if zone_sink else ('default' if outputs else '""')
+text = re.sub(r'^  log_level: info$', f'  output: {default_output}\n  log_level: info',
               text, count=1, flags=re.M)
-text = re.sub(r'^  log_level: list\(', '  output: str?\n  log_level: list(',
+if zone_label:
+    text = re.sub(r'^  name: ""$', f'  name: "{zone_label}"', text, count=1, flags=re.M)
+
+# Der eine Punkt, an dem eine Instanz nicht sein darf wie das Original.
+#
+# Der Player lauscht auf Port 8928, und das ist im Image nicht einstellbar: das
+# run-Skript rendert seine Konfiguration aus einer festen Schluesselliste, in
+# der `port` nicht vorkommt -- obwohl sendspin-cli selbst ein --port kennt und
+# in seiner Hilfe ausdruecklich zwei Player auf einem Host damit vorsieht.
+#
+# Im Netzwerk-Namespace des Hosts kann diesen Port nur eine Instanz bekommen.
+# Die uebrigen scheitern beim Binden, und ein Player, der mit Fehler endet,
+# stoppt seinen Container. Fuenf installierte Zonen waeren also ein laufender
+# Player und vier gestoppte Container.
+#
+# Ein eigener Namespace je Instanz loest das, weil dann jede ihren eigenen
+# Port 8928 hat. Der Preis ist mDNS: ohne Host-Netz kann sich der Player nicht
+# anbieten und der Server nicht zurueckverbinden. Deshalb ist `server` hier
+# nicht mehr die Empfehlung, die es bei host_network war, sondern
+# Voraussetzung -- der Player waehlt sich ein, und ueber diese Verbindung
+# laeuft danach alles.
+text = re.sub(r'^# The mDNS advertisement.*\n# on, both need.*\nhost_network: true$',
+              '# Eigener Netzwerk-Namespace je Instanz: der Player lauscht auf dem festen\n'
+              '# Port 8928, den im Netz des Hosts nur eine Instanz bekommen koennte. Ohne\n'
+              '# Host-Netz gibt es kein mDNS, also muss `server` gesetzt sein -- der Player\n'
+              '# waehlt sich dort ein, statt gefunden zu werden.\n'
+              'host_network: false',
+              text, count=1, flags=re.M)
+if 'host_network: false' not in text:
+    sys.exit('host_network konnte nicht umgestellt werden.')
+# Mit bekannten Zonen wird das Feld eine Auswahlliste, sonst bleibt es frei.
+# `default` steht als erster Eintrag darin und ist der Wert, mit dem der Player
+# dem Audio-Panel folgt -- eine Instanz, die noch keine Zone hat, spielt damit
+# hoerbar statt ins Leere.
+if outputs:
+    schema_line = '  output: list(default' + outputs + ')?\n'
+else:
+    schema_line = '  output: str?\n'
+text = re.sub(r'^  log_level: list\(', schema_line + '  log_level: list(',
               text, count=1, flags=re.M)
 
 # SENDSPIN_ID ist bewusst keine Add-on-Option: eine Instanz pro Maschine hat
@@ -125,9 +208,10 @@ environment:
 open(dest, 'w', encoding='utf-8').write(text)
 PY
 
-    grep -q '^  output: ""$' "${dir}/config.yaml" \
+    # Die Vorbelegung ist `default`, wo es eine Auswahlliste gibt, und sonst leer.
+    grep -qE '^  output: (""|default|pulse:[a-z0-9_]+)$' "${dir}/config.yaml" \
         || { echo "output-Option in ${slug} fehlt." >&2; exit 1; }
-    grep -q '^  output: str?$' "${dir}/config.yaml" \
+    grep -qE '^  output: (str\?|list\(default\|.*\)\?)$' "${dir}/config.yaml" \
         || { echo "output-Schema in ${slug} fehlt." >&2; exit 1; }
 
     python3 - "${dir}/translations/en.yaml" <<'PY'
@@ -142,8 +226,7 @@ entry = '''  output:
     description: >-
       Which PulseAudio sink this zone plays to, as `pulse:<sink>` — for example
       `pulse:zone_kitchen`. Leave it empty and the player follows this app's
-      Audio panel instead, which is the right setting when only one instance is
-      running. The zone sinks themselves are created in
+      Audio panel instead. The zone sinks themselves are created in
       /mnt/data/supervisor/audio/custom.pa; see the repository README. A
       sound-card name like `hw:1,0` cannot be opened from an app and stops it.
 '''
@@ -168,13 +251,13 @@ group membership.
    The repository README has the recipe and the scripts that generate it.
 2. Set **Audio output** here to \`pulse:<sink>\` — the sink this zone owns.
 3. Set **Player name** to what the zone should be called in Music Assistant.
-4. With more than one instance on this machine, set **Music Assistant server**
-   as well. Every instance shares the host's network namespace, and each one
-   that advertises over mDNS starts its own avahi-daemon — they would fight over
-   port 5353. A server address suppresses the advertisement.
+4. Set **Music Assistant server** to \`<host>:8927\`. This one is required, not
+   optional: each instance runs in its own network namespace so that they do not
+   all fight over the player's fixed port 8928, and without the host's network
+   there is no mDNS to be discovered on. The player dials out to the server
+   instead, and everything runs over that connection.
 
-Left unconfigured this plays through the Audio panel like a single instance
-would, which is a good way to check it starts at all.
+Without a server address the player waits to be found, and nothing will find it.
 
 This app runs the image published by
 [music-assistant/local-audio-addon](https://github.com/music-assistant/local-audio-addon);
