@@ -42,7 +42,16 @@ repo_url=${3:-}
 
 # Zweites Argument: eine Zahl, oder eine zones.conf, aus der Zahl und Auswahl-
 # liste kommen.
-outputs=''
+# Die Auswahlliste im Feld "Audio output" ist bewusst nicht aus der zones.conf
+# gebaut, sondern fest: es sind die Ausgangspaare, die ein Geraet mit bis zu
+# acht Kanaelen ueberhaupt haben kann, benannt nach den Kanalpositionen, die
+# make-zones.sh vergibt. Damit gilt dasselbe Repository fuer jedes Interface --
+# ein Vierkanaler hat eben nur die ersten beiden, und die uebrigen Eintraege
+# waehlt dort niemand. Eine Liste, die aus einer bestimmten zones.conf entsteht,
+# waere an genau eine Maschine gebunden und fuer jeden Dritten falsch.
+readonly OUTPUT_CHOICES='|pulse:out_1_2_front|pulse:out_3_4_rear|pulse:out_5_6_center_sub|pulse:out_7_8_side|pulse:out_all'
+
+outputs=${OUTPUT_CHOICES}
 labels=''
 if [ -f "${count}" ]; then
     conf=${count}
@@ -51,7 +60,6 @@ if [ -f "${count}" ]; then
         case ${suffix} in '' | '#'*) continue ;; esac
         [ -n "${sink}" ] || continue
         count=$((count + 1))
-        outputs="${outputs}|pulse:${sink}"
         labels="${labels}${labels:+, }${label}"
     done < "${conf}"
     if [ "${count}" -eq 0 ]; then
