@@ -29,6 +29,35 @@ Am Player-Image ändert sich dabei nichts. Die Kopien tragen `image:` aus dem
 Original, ziehen also dasselbe veröffentlichte Image; geändert wird nur das
 Manifest. Ein Upstream-Update ist damit ein neuer Versionsstring, kein Merge.
 
+## Vorbereitung — Zugriff, und einmal der einfache Weg
+
+Dieses Repository ist **kein** Add-on-Store; es trägt keine `repository.json`.
+Die Karte, aus der Home Assistant installiert, liegt in
+[`music-assistant/home-assistant-addon`](https://github.com/music-assistant/home-assistant-addon).
+
+Bevor die Zonen drankommen, lohnt sich das Original als Vorstufe: es zeigt in
+zehn Minuten, ob das Interface überhaupt sauber erkannt wird und Ton kommt.
+
+1. **Einstellungen → Add-ons → Add-on-Store → ⋮ → Repositories**
+2. `https://github.com/music-assistant/home-assistant-addon` hinzufügen
+3. **Local Audio** installieren und starten
+4. Auf der Add-on-Seite im **Audio**-Panel den Ausgang wählen
+
+Das ist ein Player auf einem Ausgang — kein Ersatz für das Folgende, aber die
+Fehlersuche danach ist ungleich kürzer.
+
+Für die Zonen selbst werden zwei Zugänge gebraucht:
+
+- **`/addons`**, der Ordner des lokalen Add-on-Stores. Über das offizielle
+  **Terminal & SSH**-Add-on oder **Samba share** erreichbar.
+- **Der Host.** `/mnt/data/supervisor/` gehört dem Host-Dateisystem, nicht einem
+  Add-on-Container — das offizielle Terminal-Add-on kommt dort nicht hin. Nötig
+  ist entweder das Community-Add-on **Advanced SSH & Web Terminal**
+  (`https://github.com/hassio-addons/repository`) mit **abgeschaltetem Protection
+  Mode**, was den Docker-Daemon erreichbar macht, oder eine Shell auf dem Host
+  selbst (Konsole am Gerät, oder der Debug-SSH auf Port 22222). Schritt 3 unten
+  geht den Weg über Docker, weil er ohne Eingriff am Host auskommt.
+
 ## Schritt 1 — Interface anschließen und das Mehrkanal-Profil setzen
 
 Auf der Home-Assistant-Konsole (SSH-Add-on oder direkt am Gerät):
@@ -75,16 +104,26 @@ anfassen darf.
 ./make-custom-pa.sh <master-sink-name> > custom.pa
 ```
 
-Die Datei gehört auf der HA-Maschine nach:
-
-```
-/mnt/data/supervisor/audio/custom.pa
-```
-
+Die Datei gehört auf der HA-Maschine nach `/mnt/data/supervisor/audio/custom.pa`.
 HAs PulseAudio zieht sie am Ende ihrer `system.pa` mit `.include /data/custom.pa`
 ein — ein vorgesehener Erweiterungspunkt, und `/data` überlebt Updates des
-Audio-Plugins. Das `.nofail` davor heißt allerdings auch: eine kaputte Zeile
-hält das Audio nicht an, sie fällt nur still aus. Nach dem Kopieren deshalb:
+Audio-Plugins.
+
+Dieser Pfad gehört dem Host, also führt der Weg dorthin über den Container, dem
+er als `/data` gehört. Im Advanced-SSH-Add-on mit abgeschaltetem Protection Mode:
+
+```sh
+scp custom.pa root@<ha-ip>:/tmp/          # Port ggf. anpassen
+docker cp /tmp/custom.pa hassio_audio:/data/custom.pa
+```
+
+`/data` im Container `hassio_audio` **ist** `/mnt/data/supervisor/audio`; damit
+liegt die Datei am richtigen Fleck und überlebt Neustarts. Wer ohnehin eine
+Shell auf dem Host hat, schreibt sie direkt dorthin.
+
+Das `.nofail` vor dem `.include` heißt: eine kaputte Zeile hält HAs Audio nicht
+an, sie fällt nur still aus. Nach dem Kopieren deshalb nachsehen, statt es
+anzunehmen:
 
 ```sh
 ha audio restart
@@ -101,6 +140,13 @@ Master-Sink-Name, der sich mit dem Profil geändert hat.
 ./make-addons.sh /addons zones.conf 192.168.1.10:8927
 ```
 
+Erzeugt wird üblicherweise dort, wo die Skripte liegen, und danach kopiert:
+
+```sh
+./make-addons.sh /tmp/addons zones.conf 192.168.1.10:8927
+scp -r /tmp/addons/local_audio_z* root@<ha-ip>:/addons/
+```
+
 `/addons` ist der Ordner, den der lokale Add-on-Store liest; per Samba- oder
 SSH-Add-on erreichbar. Das dritte Argument ist die Adresse des
 Music-Assistant-Servers, und auf einer Maschine mit mehreren Zonen ist es
@@ -114,6 +160,23 @@ Instanz unten.
 Danach in Home Assistant unter **Einstellungen → Add-ons → Add-on-Store** das
 Drei-Punkte-Menü → **Neu laden**. Die Instanzen erscheinen unter *Local
 add-ons*, einzeln installieren und starten.
+
+Die Kopien bauen dabei kein Image: ihr Manifest trägt `image:` aus dem Original,
+der Supervisor zieht also dasselbe veröffentlichte Image. Besteht er bei einem
+lokalen Add-on doch auf einem Dockerfile, legt `--dockerfile` eines dazu, das
+vom veröffentlichten Image erbt:
+
+```sh
+./make-addons.sh --dockerfile /tmp/addons zones.conf 192.168.1.10:8927
+```
+
+Der Tag darin kommt aus dem Manifest des Originals, wird also bei jedem Lauf
+mitgezogen und zeigt nicht auf eine Version von vorgestern.
+
+**Die Reihenfolge ist nicht beliebig:** erst die `custom.pa` aus Schritt 3, dann
+die Instanzen starten. Ein Player, dessen Sink noch nicht existiert, bekommt von
+libpulse den Default-Ausgang untergeschoben und spielt still in den falschen
+Raum, statt sich zu beschweren.
 
 ## Schritt 5 — Kontrolle
 

@@ -1,10 +1,18 @@
 #!/usr/bin/env bash
 # Erzeugt aus local_audio/ eine Add-on-Kopie je Zone aus zones.conf.
 #
-# Aufruf:  ./make-addons.sh <zielverzeichnis> [zones.conf] [server]
+# Aufruf:  ./make-addons.sh [--dockerfile] <zielverzeichnis> [zones.conf] [server]
 #
 #   ./make-addons.sh /tmp/addons                              # zum Ansehen
 #   ./make-addons.sh /addons zones.conf 192.168.1.10:8927     # auf der HA-Maschine
+#
+# --dockerfile legt in jeder Kopie zusaetzlich ein einzeiliges Dockerfile ab, das
+# vom veroeffentlichten Image erbt. Noetig ist es nicht: das Manifest traegt
+# `image:`, also zieht der Supervisor dieses Image, statt zu bauen. Es ist der
+# Ausweg fuer den Fall, dass eine Supervisor-Version bei einem lokalen Add-on auf
+# einem Dockerfile besteht -- dann baut sie ein Image, das nichts weiter tut als
+# vom richtigen zu erben. Beides nebeneinander stoert sich nicht: wo `image:`
+# greift, wird das Dockerfile nicht angesehen.
 #
 # Das dritte Argument ist die Adresse des Music-Assistant-Servers, und auf einer
 # Maschine mit mehr als einer Instanz ist es keine Kuer. Alle Instanzen laufen
@@ -40,8 +48,18 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 source_addon="${here}/../local_audio"
 
+with_dockerfile=0
+while [ "$#" -gt 0 ]; do
+    case $1 in
+        --dockerfile) with_dockerfile=1; shift ;;
+        --) shift; break ;;
+        -*) echo "Unbekannte Option: $1" >&2; exit 1 ;;
+        *) break ;;
+    esac
+done
+
 if [ "$#" -lt 1 ]; then
-    echo "Aufruf: $0 <zielverzeichnis> [zones.conf]" >&2
+    echo "Aufruf: $0 [--dockerfile] <zielverzeichnis> [zones.conf] [server]" >&2
     exit 1
 fi
 
@@ -52,6 +70,18 @@ server=${3:-}
 [ -d "${source_addon}" ] || { echo "Kein local_audio/ neben zones/ gefunden." >&2; exit 1; }
 [ -r "${conf}" ] || { echo "zones.conf nicht lesbar: ${conf}" >&2; exit 1; }
 mkdir -p "${target}"
+
+# Aus dem Original gelesen statt hier notiert, damit ein Upstream-Update nicht
+# ein Dockerfile hinterlaesst, das auf die vorige Version zeigt.
+if [ "${with_dockerfile}" = 1 ]; then
+    base_image=$(sed -n 's/^image: *//p' "${source_addon}/config.yaml" | head -n 1)
+    base_version=$(sed -n 's/^version: *"\{0,1\}\([^"]*\)"\{0,1\} *$/\1/p' \
+        "${source_addon}/config.yaml" | head -n 1)
+    if [ -z "${base_image}" ] || [ -z "${base_version}" ]; then
+        echo "image: oder version: nicht aus dem Manifest lesbar -- ohne beides gibt es kein Dockerfile." >&2
+        exit 1
+    fi
+fi
 
 lineno=0
 seen=''
@@ -193,6 +223,24 @@ entry = f'''  output:
 text = re.sub(r'^  log_level:$', entry + '  log_level:', text, count=1, flags=re.M)
 open(path, 'w', encoding='utf-8').write(text)
 PY
+
+    if [ "${with_dockerfile}" = 1 ]; then
+        cat > "${dir}/Dockerfile" <<EOF
+# Erzeugt von zones/make-addons.sh --dockerfile.
+#
+# Das Manifest dieser Kopie traegt \`image:\`, also zieht der Supervisor
+# normalerweise das veroeffentlichte Image und baut gar nichts. Diese Datei ist
+# fuer den Fall da, dass er bei einem lokalen Add-on trotzdem auf einem
+# Dockerfile besteht: gebaut wird dann ein Image, das nichts weiter tut als vom
+# richtigen zu erben -- Labels, Init und Player kommen unveraendert von dort.
+#
+# Kein ARG BUILD_FROM: das setzt der Supervisor auf das Home-Assistant-Basisimage
+# der Architektur, und dieses Add-on wuerde dann auf ein Basisimage ohne Player
+# gebaut. Der Tag steht hier deshalb ausgeschrieben und wird bei jedem Lauf aus
+# dem Manifest neu genommen.
+FROM ${base_image}:${base_version}
+EOF
+    fi
 
     if [ -n "${server}" ]; then
         printf '%-22s -> %-12s output: pulse:%-18s server: %s\n' \
